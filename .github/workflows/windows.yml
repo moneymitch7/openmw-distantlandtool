@@ -89,6 +89,7 @@ jobs:
         -D BUILD_NIFTEST=OFF
         -D BUILD_NAVMESHTOOL=OFF
         -D BUILD_BULLETOBJECTTOOL=OFF
+        -D BUILD_DISTANTLANDTOOL=OFF
         -D OPENMW_USE_SYSTEM_SQLITE3=OFF
         -D OPENMW_USE_SYSTEM_YAML_CPP=OFF
         2>&1 | Tee-Object -FilePath ${{ github.workspace }}/configure.log
