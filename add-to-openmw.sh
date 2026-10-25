@@ -9,7 +9,8 @@ rm -rf "${openmw:?}/apps/distantlandtool"
 mkdir -p "$openmw/apps/distantlandtool"
 cp "$here"/src/* "$openmw/apps/distantlandtool/"
 cp -r "$here/extern/meshoptimizer" "$openmw/apps/distantlandtool/meshoptimizer"
-if ! grep -q "add_subdirectory(apps/distantlandtool)" "$openmw/CMakeLists.txt"; then
+# (the marker, not the line: some fork builds had the tool themselves, behind BUILD_DISTANTLANDTOOL)
+if ! grep -q "added by add-to-openmw.sh" "$openmw/CMakeLists.txt"; then
     printf '\n# openmw-distantlandtool (added by add-to-openmw.sh)\nadd_subdirectory(apps/distantlandtool)\n' >> "$openmw/CMakeLists.txt"
 fi
 echo "Added openmw-distantlandtool to $openmw"
