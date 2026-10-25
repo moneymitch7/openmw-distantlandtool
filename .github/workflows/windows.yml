@@ -1,0 +1,119 @@
+name: Windows
+
+# Builds openmw-distantlandtool.exe against the OpenMGE XE OpenMW fork, with the same prebuilt dependencies as its
+# Windows build, so the exe runs from that build's folder (next to openmw.exe, using its DLLs).
+on:
+  push:
+  workflow_dispatch:
+    inputs:
+      openmw-ref:
+        description: Branch, tag or commit of moneymitch7/openmw to build against
+        default: openmge-xe-actorclamp
+        type: string
+
+env:
+  OPENMW_REF: ${{ inputs.openmw-ref || 'openmge-xe-actorclamp' }}
+  MSVC: "2022"
+
+jobs:
+  Windows:
+    runs-on: windows-2022
+
+    env:
+      archive: FAILEDTODOWNLOAD
+
+    steps:
+    - uses: actions/checkout@v6
+      with:
+        path: tool
+
+    - uses: actions/checkout@v6
+      with:
+        repository: moneymitch7/openmw
+        ref: ${{ env.OPENMW_REF }}
+        path: openmw
+
+    - shell: bash
+      name: Add deps version env to GITHUB_ENV, stripping comments
+      run: |
+        sed '/^\s*#/d; /^\s*$/d' "${{ github.workspace }}/openmw/CI/deps_versions.msvc.sh" >> $GITHUB_ENV
+
+    - name: Download prebuilt vcpkg packages
+      run: |
+        mkdir -p ${{ github.workspace }}/deps
+        cd ${{ github.workspace }}/deps
+        $MANIFEST = "vcpkg-x64-windows-${{ env.MSVC }}-${{ env.VCPKG_TAG }}-manifest.txt"
+        curl --fail --retry 3 -L -o "$MANIFEST" "https://gitlab.com/OpenMW/openmw-deps/-/raw/main/windows/$MANIFEST"
+        $lines = Get-Content "$MANIFEST"
+        $URL = $lines[0]
+        $split = -split $lines[1]
+        $HASH = $split[0]
+        $FILE = $split[1]
+        curl --fail --retry 3 -L -o "$FILE" "$URL"
+        $filehash = Get-FileHash "$FILE" -Algorithm SHA512
+        if ( $filehash.hash -ne "$HASH" ) {
+          exit 1
+        }
+        echo "archive=$FILE" >> $env:GITHUB_ENV
+
+    - name: Extract archived prebuilt vcpkg packages
+      working-directory: ${{ github.workspace }}/deps
+      run: 7z x -y -ovcpkg-x64-windows-${{ env.MSVC }}-${{ env.VCPKG_TAG }} $env:archive
+
+    - uses: ilammy/msvc-dev-cmd@v1
+
+    - uses: seanmiddleditch/gha-setup-ninja@master
+
+    - name: Add the tool to OpenMW
+      shell: bash
+      run: ./tool/add-to-openmw.sh openmw
+
+    - name: Configure
+      run: >
+        cmake
+        -S openmw
+        -B ${{ github.workspace }}/build
+        -G Ninja
+        -D CMAKE_BUILD_TYPE=RelWithDebInfo
+        -D CMAKE_TOOLCHAIN_FILE='${{ github.workspace }}/deps/vcpkg-x64-windows-${{ env.MSVC }}-${{ env.VCPKG_TAG }}/scripts/buildsystems/vcpkg.cmake'
+        -D LuaJit_INCLUDE_DIR='${{ github.workspace }}/deps/vcpkg-x64-windows-${{ env.MSVC }}-${{ env.VCPKG_TAG }}/installed/x64-windows/include/luajit'
+        -D LuaJit_LIBRARY='${{ github.workspace }}/deps/vcpkg-x64-windows-${{ env.MSVC }}-${{ env.VCPKG_TAG }}/installed/x64-windows/lib/lua51.lib'
+        -D BUILD_OPENMW=OFF
+        -D BUILD_LAUNCHER=OFF
+        -D BUILD_WIZARD=OFF
+        -D BUILD_MWINIIMPORTER=OFF
+        -D BUILD_OPENCS=OFF
+        -D BUILD_ESSIMPORTER=OFF
+        -D BUILD_BSATOOL=OFF
+        -D BUILD_ESMTOOL=OFF
+        -D BUILD_NIFTEST=OFF
+        -D BUILD_NAVMESHTOOL=OFF
+        -D BUILD_BULLETOBJECTTOOL=OFF
+        -D OPENMW_USE_SYSTEM_SQLITE3=OFF
+        -D OPENMW_USE_SYSTEM_YAML_CPP=OFF
+        2>&1 | Tee-Object -FilePath ${{ github.workspace }}/configure.log
+
+    - name: Report configure errors
+      if: failure()
+      shell: bash
+      run: |
+        if [ -f configure.log ]; then
+          msg=$(grep -A14 "CMake Error" configure.log | head -60 | sed ':a;N;$!ba;s/\r//g;s/%/%25/g;s/\n/%0A/g')
+          echo "::error title=CMake configure::${msg:-no CMake Error lines; see configure.log}"
+        fi
+
+    - name: Build
+      run: cmake --build ${{ github.workspace }}/build --target openmw-distantlandtool
+
+    - name: Collect
+      shell: bash
+      run: |
+        mkdir -p out
+        cp build/openmw-distantlandtool.exe out/
+        cp build/openmw-distantlandtool.pdb out/ 2>/dev/null || true
+        cp tool/README.md out/openmw-distantlandtool-README.md
+
+    - uses: actions/upload-artifact@v6
+      with:
+        name: openmw-distantlandtool-${{ github.sha }}
+        path: out/*
