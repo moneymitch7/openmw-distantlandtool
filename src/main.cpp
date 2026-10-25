@@ -27,7 +27,6 @@
 #include <components/resource/bgsmfilemanager.hpp>
 #include <components/resource/imagemanager.hpp>
 #include <components/resource/niffilemanager.hpp>
-#include <components/settings/values.hpp>
 #include <components/toutf8/toutf8.hpp>
 #include <components/version/version.hpp>
 #include <components/vfs/manager.hpp>
@@ -400,7 +399,8 @@ namespace DistantLandTool
             VFS::Manager vfs;
             VFS::registerArchives(&vfs, fileCollections, archives, true, &encoder.getStatelessEncoder());
 
-            Settings::Manager::load(config);
+            // No game settings are read: nothing the tool does depends on them, and the defaults file of the OpenMW
+            // build next to it may be older or newer than the one the tool was built with.
 
             const StringsVector& onlyModels = variables["model"].as<StringsVector>();
             std::map<VFS::Path::Normalized, ModelUse> models;
