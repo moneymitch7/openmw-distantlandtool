@@ -8,9 +8,9 @@
 
 #include <osg/AlphaFunc>
 #include <osg/BlendFunc>
+#include <osg/FrontFace>
 #include <osg/Geometry>
 #include <osg/LOD>
-#include <osg/Material>
 #include <osg/MatrixTransform>
 #include <osg/NodeVisitor>
 #include <osg/PositionAttitudeTransform>
@@ -54,6 +54,7 @@ namespace DistantLandTool
             bool mBlend = false;
             bool mTwoSided = false;
             bool mHasColors = false;
+            bool mClockwise = false; // front faces wound clockwise (not part of the look: turned around when merged)
         };
 
         struct Group
@@ -96,65 +97,6 @@ namespace DistantLandTool
             if (look.mBlend && look.mBlendFunc != nullptr)
                 key << look.mBlendFunc->getSource() << ',' << look.mBlendFunc->getDestination();
             return key.str();
-        }
-
-        osg::Material::ColorMode toColorMode(SceneUtil::VertexColorModes mode)
-        {
-            switch (mode)
-            {
-                case SceneUtil::VertexColorModes::Emission:
-                    return osg::Material::EMISSION;
-                case SceneUtil::VertexColorModes::AmbientAndDiffuse:
-                    return osg::Material::AMBIENT_AND_DIFFUSE;
-                case SceneUtil::VertexColorModes::Ambient:
-                    return osg::Material::AMBIENT;
-                case SceneUtil::VertexColorModes::Diffuse:
-                    return osg::Material::DIFFUSE;
-                case SceneUtil::VertexColorModes::Specular:
-                    return osg::Material::SPECULAR;
-                default:
-                    return osg::Material::OFF;
-            }
-        }
-
-        // The look as plain OSG state (read back by OpenMW's loader of OSG files, which turns the material into its
-        // own): the base texture on unit 0, the material, alpha testing and blending, both sides when the model has.
-        osg::ref_ptr<osg::StateSet> makeStateSet(const Look& look)
-        {
-            osg::ref_ptr<osg::StateSet> stateset = new osg::StateSet;
-            if (look.mImage != nullptr)
-            {
-                osg::ref_ptr<osg::Texture2D> texture = new osg::Texture2D(look.mImage);
-                texture->setWrap(osg::Texture::WRAP_S, static_cast<osg::Texture::WrapMode>(look.mWrapS));
-                texture->setWrap(osg::Texture::WRAP_T, static_cast<osg::Texture::WrapMode>(look.mWrapT));
-                texture->setResizeNonPowerOfTwoHint(false);
-                stateset->setTextureAttributeAndModes(0, texture, osg::StateAttribute::ON);
-            }
-            if (look.mMaterial != nullptr)
-            {
-                const SceneUtil::Material& m = *look.mMaterial;
-                osg::ref_ptr<osg::Material> material = new osg::Material;
-                material->setDiffuse(osg::Material::FRONT_AND_BACK, m.getDiffuse());
-                material->setAmbient(osg::Material::FRONT_AND_BACK, m.getAmbient());
-                material->setSpecular(osg::Material::FRONT_AND_BACK, m.getSpecular());
-                material->setEmission(osg::Material::FRONT_AND_BACK, m.getEmission());
-                material->setShininess(osg::Material::FRONT_AND_BACK, std::clamp(m.getShininess(), 0.f, 128.f));
-                material->setColorMode(look.mHasColors ? toColorMode(m.getVertexColorMode()) : osg::Material::OFF);
-                stateset->setAttribute(material, osg::StateAttribute::ON);
-            }
-            if (look.mAlphaFunc != nullptr)
-                stateset->setAttributeAndModes(new osg::AlphaFunc(*look.mAlphaFunc), osg::StateAttribute::ON);
-            if (look.mBlend)
-            {
-                if (look.mBlendFunc != nullptr)
-                    stateset->setAttributeAndModes(new osg::BlendFunc(*look.mBlendFunc), osg::StateAttribute::ON);
-                else
-                    stateset->setMode(GL_BLEND, osg::StateAttribute::ON);
-                stateset->setRenderingHint(osg::StateSet::TRANSPARENT_BIN);
-            }
-            if (look.mTwoSided)
-                stateset->setMode(GL_CULL_FACE, osg::StateAttribute::OFF);
-            return stateset;
         }
 
         bool isOn(const osg::StateSet& stateset, GLenum mode)
@@ -323,6 +265,9 @@ namespace DistantLandTool
                 look.mBlendFunc
                     = dynamic_cast<const osg::BlendFunc*>(stateset.getAttribute(osg::StateAttribute::BLENDFUNC));
                 look.mTwoSided = isOff(stateset, GL_CULL_FACE);
+                if (const osg::FrontFace* frontFace
+                    = dynamic_cast<const osg::FrontFace*>(stateset.getAttribute(osg::StateAttribute::FRONTFACE)))
+                    look.mClockwise = frontFace->getMode() == osg::FrontFace::CLOCKWISE;
                 look.mHasColors = hasColors;
                 return look;
             }
@@ -402,6 +347,7 @@ namespace DistantLandTool
 
                 // (the geometry's own state set is already in, see enter)
                 const Look look = getLook(*mStateSets.back(), colors != nullptr);
+                const bool turn = mirrored != look.mClockwise;
                 Group& group = mGroups[makeKey(look)];
                 group.mLook = look;
                 const unsigned int base = static_cast<unsigned int>(group.mVertices.size());
@@ -409,8 +355,8 @@ namespace DistantLandTool
                 for (std::size_t i = 0; i + 2 < indices.size(); i += 3)
                 {
                     group.mIndices.push_back(base + indices[i]);
-                    group.mIndices.push_back(base + indices[mirrored ? i + 2 : i + 1]);
-                    group.mIndices.push_back(base + indices[mirrored ? i + 1 : i + 2]);
+                    group.mIndices.push_back(base + indices[turn ? i + 2 : i + 1]);
+                    group.mIndices.push_back(base + indices[turn ? i + 1 : i + 2]);
                 }
             }
         };
@@ -452,53 +398,76 @@ namespace DistantLandTool
             group.mVertices = std::move(vertices);
         }
 
-        osg::ref_ptr<osg::Geometry> makeGeometry(const Group& group)
+        DistantShape makeShape(const Group& group)
         {
-            osg::ref_ptr<osg::Geometry> geometry = new osg::Geometry;
+            DistantShape shape;
+            const Look& look = group.mLook;
             const std::size_t count = group.mVertices.size();
-            osg::ref_ptr<osg::Vec3Array> positions = new osg::Vec3Array(count);
-            osg::ref_ptr<osg::Vec3Array> normals = new osg::Vec3Array(osg::Array::BIND_PER_VERTEX, count);
-            for (std::size_t i = 0; i < count; ++i)
+            shape.mPositions.reserve(count);
+            shape.mNormals.reserve(count);
+            for (const Vertex& v : group.mVertices)
             {
-                const Vertex& v = group.mVertices[i];
-                (*positions)[i].set(v.mPosition[0], v.mPosition[1], v.mPosition[2]);
-                (*normals)[i].set(v.mNormal[0], v.mNormal[1], v.mNormal[2]);
+                shape.mPositions.emplace_back(v.mPosition[0], v.mPosition[1], v.mPosition[2]);
+                shape.mNormals.emplace_back(v.mNormal[0], v.mNormal[1], v.mNormal[2]);
+                if (look.mImage != nullptr)
+                    shape.mTexCoords.emplace_back(v.mTexCoord[0], v.mTexCoord[1]);
+                if (look.mHasColors)
+                    shape.mColors.emplace_back(v.mColor[0], v.mColor[1], v.mColor[2], v.mColor[3]);
             }
-            geometry->setVertexArray(positions);
-            geometry->setNormalArray(normals, osg::Array::BIND_PER_VERTEX);
-            if (group.mLook.mImage != nullptr)
+            shape.mIndices = group.mIndices;
+            if (look.mImage != nullptr)
             {
-                osg::ref_ptr<osg::Vec2Array> texCoords = new osg::Vec2Array(osg::Array::BIND_PER_VERTEX, count);
-                for (std::size_t i = 0; i < count; ++i)
-                    (*texCoords)[i].set(group.mVertices[i].mTexCoord[0], group.mVertices[i].mTexCoord[1]);
-                geometry->setTexCoordArray(0, texCoords, osg::Array::BIND_PER_VERTEX);
+                shape.mTexture = look.mImage->getFileName();
+                shape.mWrapS = look.mWrapS != osg::Texture::CLAMP_TO_EDGE && look.mWrapS != osg::Texture::CLAMP;
+                shape.mWrapT = look.mWrapT != osg::Texture::CLAMP_TO_EDGE && look.mWrapT != osg::Texture::CLAMP;
             }
-            if (group.mLook.mHasColors)
+            if (look.mMaterial != nullptr)
             {
-                osg::ref_ptr<osg::Vec4Array> colors = new osg::Vec4Array(osg::Array::BIND_PER_VERTEX, count);
-                for (std::size_t i = 0; i < count; ++i)
+                const SceneUtil::Material& m = *look.mMaterial;
+                shape.mHasMaterial = true;
+                shape.mDiffuse = m.getDiffuse();
+                shape.mAmbient = m.getAmbient();
+                shape.mSpecular = m.getSpecular();
+                shape.mEmission = m.getEmission();
+                shape.mShininess = m.getShininess();
+                shape.mVertexColorMode = static_cast<int>(m.getVertexColorMode());
+            }
+            if (look.mAlphaFunc != nullptr)
+            {
+                shape.mAlphaTest = true;
+                shape.mAlphaFunc = look.mAlphaFunc->getFunction();
+                shape.mAlphaRef = look.mAlphaFunc->getReferenceValue();
+            }
+            if (look.mBlend)
+            {
+                shape.mBlend = true;
+                if (look.mBlendFunc != nullptr)
                 {
-                    const auto& c = group.mVertices[i].mColor;
-                    (*colors)[i].set(c[0], c[1], c[2], c[3]);
+                    shape.mBlendSource = look.mBlendFunc->getSource();
+                    shape.mBlendDestination = look.mBlendFunc->getDestination();
                 }
-                geometry->setColorArray(colors, osg::Array::BIND_PER_VERTEX);
             }
-            if (count <= 0xffff)
-            {
-                osg::ref_ptr<osg::DrawElementsUShort> elements = new osg::DrawElementsUShort(GL_TRIANGLES);
-                elements->reserve(group.mIndices.size());
-                for (unsigned int index : group.mIndices)
-                    elements->push_back(static_cast<unsigned short>(index));
-                geometry->addPrimitiveSet(elements);
-            }
-            else
-                geometry->addPrimitiveSet(
-                    new osg::DrawElementsUInt(GL_TRIANGLES, group.mIndices.begin(), group.mIndices.end()));
-            geometry->setUseDisplayList(false);
-            geometry->setUseVertexBufferObjects(true);
-            geometry->setStateSet(makeStateSet(group.mLook));
-            return geometry;
+            shape.mTwoSided = look.mTwoSided;
+            return shape;
         }
+    }
+
+    std::string describe(const DistantShape& shape)
+    {
+        std::ostringstream out;
+        out << shape.mIndices.size() / 3 << " triangles, texture \"" << shape.mTexture << "\" wrap " << shape.mWrapS
+            << shape.mWrapT << (shape.mColors.empty() ? "" : ", vertex colours");
+        if (shape.mHasMaterial)
+            out << ", material diffuse " << shape.mDiffuse.r() << ' ' << shape.mDiffuse.g() << ' ' << shape.mDiffuse.b()
+                << " alpha " << shape.mDiffuse.a() << " emission " << shape.mEmission.r() << ' ' << shape.mEmission.g()
+                << ' ' << shape.mEmission.b() << " colour mode " << shape.mVertexColorMode;
+        if (shape.mAlphaTest)
+            out << ", alpha test " << shape.mAlphaFunc << ' ' << shape.mAlphaRef;
+        if (shape.mBlend)
+            out << ", blend " << shape.mBlendSource << ' ' << shape.mBlendDestination;
+        if (shape.mTwoSided)
+            out << ", two-sided";
+        return out.str();
     }
 
     SimplifyResult simplifyModel(const osg::Node& model, float maxScale, const SimplifyOptions& options)
@@ -520,19 +489,22 @@ namespace DistantLandTool
             return result;
         }
 
-        osg::ref_ptr<osg::Group> root = new osg::Group;
-        root->setName(model.getName());
         const float maxError = options.mMaxError / scale;
         for (auto& [key, group] : collector.mGroups)
         {
             weld(group);
             std::vector<unsigned int> simplified(group.mIndices.size());
             float error = 0.f;
-            const std::size_t size = meshopt_simplify(simplified.data(), group.mIndices.data(), group.mIndices.size(),
-                group.mVertices.front().mPosition.data(), group.mVertices.size(), sizeof(Vertex), 0, maxError,
-                meshopt_SimplifyErrorAbsolute, &error);
+            // no error allowed: merged only, not simplified
+            const std::size_t size = maxError <= 0.f
+                ? group.mIndices.size()
+                : meshopt_simplify(simplified.data(), group.mIndices.data(), group.mIndices.size(),
+                      group.mVertices.front().mPosition.data(), group.mVertices.size(), sizeof(Vertex), 0, maxError,
+                      meshopt_SimplifyErrorAbsolute, &error);
             if (size < 3)
                 continue;
+            if (maxError <= 0.f)
+                simplified = group.mIndices;
             simplified.resize(size);
             meshopt_optimizeVertexCache(
                 simplified.data(), simplified.data(), simplified.size(), group.mVertices.size());
@@ -540,21 +512,22 @@ namespace DistantLandTool
             compact(group);
             result.mTrianglesOut += group.mIndices.size() / 3;
             ++result.mDrawablesOut;
-            root->addChild(makeGeometry(group));
+            result.mShapes.push_back(makeShape(group));
         }
 
-        if (root->getNumChildren() == 0)
+        if (result.mShapes.empty())
         {
             result.mSkipReason = "nothing left";
             return result;
         }
         // worth it only when there is less to draw: fewer triangles or fewer shapes
-        if (result.mTrianglesOut * 10 > result.mTrianglesIn * 9 && result.mDrawablesOut >= result.mDrawablesIn)
+        if (!options.mKeepUnchanged && result.mTrianglesOut * 10 > result.mTrianglesIn * 9
+            && result.mDrawablesOut >= result.mDrawablesIn)
         {
             result.mSkipReason = "already simple";
+            result.mShapes.clear();
             return result;
         }
-        result.mNode = root;
         return result;
     }
 }

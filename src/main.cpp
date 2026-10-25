@@ -1,7 +1,8 @@
 // OpenMGE XE openmw-distantlandtool: makes simpler distant versions of the models placed outside, for object paging's
-// distant chunks (Misc::ResourceHelpers::getLODMeshName finds them as <model>_dist_0.osgb). Run it again after
+// distant chunks (Misc::ResourceHelpers::getLODMeshName finds them as <model>_dist_0.nif). Run it again after
 // changing mods; without it, or for a model it left alone, the chunks use the full model as before.
 
+#include "nifwriter.hpp"
 #include "simplify.hpp"
 
 #include <components/debug/debugging.hpp>
@@ -32,7 +33,8 @@
 #include <components/vfs/manager.hpp>
 #include <components/vfs/registerarchives.hpp>
 
-#include <osgDB/Registry>
+#include <osg/AlphaFunc>
+#include <osg/BlendFunc>
 
 #include <boost/program_options.hpp>
 
@@ -127,6 +129,9 @@ namespace DistantLandTool
                 "only these models (paths in the data folders, as meshes/x/y.nif), at scale 1, each read back after "
                 "it is written; for testing");
 
+            addOption("self-test", bpo::value<bool>()->implicit_value(true)->default_value(false),
+                "write a test model with every property the tool writes, read it back as the game does and compare");
+
             addOption("dry-run", bpo::value<bool>()->implicit_value(true)->default_value(false),
                 "simplify and report, but write nothing");
 
@@ -209,14 +214,16 @@ namespace DistantLandTool
             return result;
         }
 
-        // meshes/x/y.nif -> meshes/x/y_dist_0.osgb
+        constexpr std::string_view distantSuffix = "_dist_0.nif";
+
+        // meshes/x/y.nif -> meshes/x/y_dist_0.nif
         std::string getDistantName(const VFS::Path::Normalized& model)
         {
             std::string name(model.value());
             const std::size_t dot = name.find_last_of('.');
             if (dot != std::string::npos && name.find('/', dot) == std::string::npos)
                 name.erase(dot);
-            return name + "_dist_0.osgb";
+            return name + std::string(distantSuffix);
         }
 
         void removePreviousFiles(const std::filesystem::path& output)
@@ -230,7 +237,7 @@ namespace DistantLandTool
             while (std::getline(stream, line))
             {
                 // only what this tool writes
-                if (line.empty() || !line.ends_with("_dist_0.osgb") || line.find("..") != std::string::npos)
+                if (line.empty() || !line.ends_with(distantSuffix) || line.find("..") != std::string::npos)
                     continue;
                 std::error_code ec;
                 if (std::filesystem::remove(output / Files::pathFromUnicodeString(line), ec))
@@ -239,6 +246,86 @@ namespace DistantLandTool
             stream.close();
             std::filesystem::remove(manifest);
             Log(Debug::Info) << "Removed " << removed << " distant models of the last run";
+        }
+
+        // A shape with every property the writer knows, written and read back through OpenMW's NIF loader.
+        int selfTest(ToUTF8::Utf8Encoder& encoder)
+        {
+            const std::filesystem::path folder = std::filesystem::temp_directory_path() / "openmw-distantlandtool-test";
+            std::filesystem::create_directories(folder / "meshes");
+            std::filesystem::create_directories(folder / "textures");
+            std::ofstream(folder / "textures" / "test.dds") << "x";
+
+            std::vector<DistantShape> shapes;
+            for (int variant = 0; variant < 4; ++variant)
+            {
+                DistantShape shape;
+                shape.mPositions = { { 0, 0, 0 }, { 100, 0, 0 }, { 0, 100, 0 }, { 100, 100, 50.f * variant } };
+                shape.mNormals.assign(4, osg::Vec3f(0, 0, 1));
+                shape.mIndices = { 0, 1, 2, 2, 1, 3 };
+                if (variant != 1)
+                {
+                    shape.mTexture = "textures/test.dds";
+                    shape.mTexCoords = { { 0, 0 }, { 1, 0 }, { 0, 1 }, { 1, 1 } };
+                    shape.mWrapS = variant != 2;
+                    shape.mWrapT = variant != 3;
+                }
+                if (variant != 3)
+                {
+                    shape.mColors.assign(4, osg::Vec4f(0.5f, 0.25f, 1.f, 1.f));
+                }
+                shape.mHasMaterial = true;
+                shape.mDiffuse = osg::Vec4f(0.75f, 0.5f, 0.25f, variant == 0 ? 0.5f : 1.f);
+                shape.mAmbient = osg::Vec4f(0.25f, 0.5f, 0.75f, 1.f);
+                shape.mEmission = osg::Vec4f(0.125f * variant, 0, 0, 1);
+                shape.mShininess = 10.f * variant;
+                shape.mVertexColorMode = variant == 2 ? 1 : variant == 3 ? 0 : 2;
+                shape.mAlphaTest = variant == 1 || variant == 2;
+                shape.mAlphaFunc = variant == 1 ? osg::AlphaFunc::GEQUAL : osg::AlphaFunc::GREATER;
+                shape.mAlphaRef = variant == 1 ? 128.f / 255.f : 64.f / 255.f;
+                shape.mBlend = variant == 0 || variant == 2;
+                shape.mBlendSource = variant == 0 ? osg::BlendFunc::SRC_ALPHA : osg::BlendFunc::ONE;
+                shape.mBlendDestination = variant == 0 ? osg::BlendFunc::ONE_MINUS_SRC_ALPHA : osg::BlendFunc::ONE;
+                shape.mTwoSided = variant == 1 || variant == 3;
+                shapes.push_back(std::move(shape));
+            }
+            {
+                std::ofstream stream(folder / "meshes" / "test_dist_0.nif", std::ios::binary);
+                writeNif(stream, "test", shapes);
+            }
+
+            VFS::Manager vfs;
+            Files::PathContainer dirs{ folder };
+            VFS::registerArchives(&vfs, Files::Collections(dirs), {}, true, &encoder.getStatelessEncoder());
+            Resource::ImageManager imageManager(&vfs, 0);
+            imageManager.setNamesOnly(true);
+            Resource::NifFileManager nifFileManager(&vfs, &encoder.getStatelessEncoder());
+            Resource::BgsmFileManager bgsmFileManager(&vfs, 0);
+            const osg::ref_ptr<osg::Node> node = NifOsg::Loader::load(
+                *nifFileManager.get(VFS::Path::Normalized("meshes/test_dist_0.nif")), &imageManager, &bgsmFileManager);
+            const SimplifyResult result = simplifyModel(
+                *node, 1.f, SimplifyOptions{ .mMaxError = 0.f, .mMinPartRadius = 0.f, .mKeepUnchanged = true });
+
+            std::vector<std::string> written;
+            std::vector<std::string> read;
+            for (const DistantShape& shape : shapes)
+                written.push_back(describe(shape));
+            for (const DistantShape& shape : result.mShapes)
+                read.push_back(describe(shape));
+            std::sort(written.begin(), written.end());
+            std::sort(read.begin(), read.end());
+            for (const std::string& line : written)
+                Log(Debug::Info) << "written: " << line;
+            for (const std::string& line : read)
+                Log(Debug::Info) << "read:    " << line;
+            std::filesystem::remove_all(folder);
+            if (written != read)
+            {
+                Log(Debug::Error) << "Self test failed: what was read back differs from what was written";
+                return 1;
+            }
+            Log(Debug::Info) << "Self test passed";
+            return 0;
         }
 
         int runDistantLandTool(int argc, char* argv[])
@@ -268,6 +355,9 @@ namespace DistantLandTool
             const std::string encoding(variables["encoding"].as<std::string>());
             Log(Debug::Info) << ToUTF8::encodingUsingMessage(encoding);
             ToUTF8::Utf8Encoder encoder(ToUTF8::calculateEncoding(encoding));
+
+            if (variables["self-test"].as<bool>())
+                return selfTest(encoder);
 
             Files::PathContainer dataDirs(asPathContainer(variables["data"].as<Files::MaybeQuotedPathContainer>()));
 
@@ -299,6 +389,14 @@ namespace DistantLandTool
 
             Fallback::Map::init(variables["fallback"].as<Fallback::FallbackMap>().mMap);
 
+            Log(Debug::Info) << "Writing distant models to " << output << (dryRun ? " (dry run: nothing written)" : "");
+            // before the data folders are read: the last run's models are no mod's
+            if (!dryRun)
+            {
+                std::filesystem::create_directories(output);
+                removePreviousFiles(output);
+            }
+
             VFS::Manager vfs;
             VFS::registerArchives(&vfs, fileCollections, archives, true, &encoder.getStatelessEncoder());
 
@@ -329,25 +427,9 @@ namespace DistantLandTool
             Resource::NifFileManager nifFileManager(&vfs, &encoder.getStatelessEncoder());
             Resource::BgsmFileManager bgsmFileManager(&vfs, expiryDelay);
 
-            Log(Debug::Info) << "Writing distant models to " << output << (dryRun ? " (dry run: nothing written)" : "");
-            if (!dryRun)
-            {
-                std::filesystem::create_directories(output);
-                removePreviousFiles(output);
-            }
-
-            osgDB::ReaderWriter* writer = osgDB::Registry::instance()->getReaderWriterForExtension("osgb");
-            if (writer == nullptr && !dryRun)
-            {
-                Log(Debug::Error) << "No OSG writer for .osgb files (the osgdb_osg plugin): nothing can be written";
-                return 1;
-            }
-            osg::ref_ptr<osgDB::Options> writeOptions = new osgDB::Options("WriteImageHint=UseExternal");
-
             std::vector<std::pair<VFS::Path::Normalized, ModelUse>> work(models.begin(), models.end());
             std::atomic<std::size_t> next = 0;
             std::mutex mutex; // the log of skipped models, the manifest, the totals
-            std::mutex writeMutex;
             std::vector<std::string> written;
             std::map<std::string, std::size_t> skipped;
             std::size_t trianglesIn = 0;
@@ -381,6 +463,14 @@ namespace DistantLandTool
                                 ++skipped["not a NIF"];
                                 continue;
                             }
+                            // a mod's own distant version is used by the game as it is
+                            const std::string distantName = getDistantName(model);
+                            if (vfs.exists(VFS::Path::Normalized(distantName)))
+                            {
+                                const std::lock_guard lock(mutex);
+                                ++skipped["a mod has its own distant version"];
+                                continue;
+                            }
                             const osg::ref_ptr<const osg::Node> node
                                 = NifOsg::Loader::load(*nifFileManager.get(model), &imageManager, &bgsmFileManager);
                             if (node->getBound().radius() * use.mMaxScale < minObjectRadius)
@@ -390,30 +480,30 @@ namespace DistantLandTool
                                 continue;
                             }
                             SimplifyResult result = simplifyModel(*node, use.mMaxScale, simplifyOptions);
-                            const std::string distantName = getDistantName(model);
-                            if (result.mNode != nullptr && !dryRun)
+                            if (!result.mShapes.empty() && !dryRun)
                             {
                                 const std::filesystem::path path = output / Files::pathFromUnicodeString(distantName);
                                 std::filesystem::create_directories(path.parent_path());
                                 std::ofstream stream(path, std::ios::binary);
-                                const std::lock_guard writeLock(writeMutex);
-                                const osgDB::ReaderWriter::WriteResult writeResult
-                                    = writer->writeNode(*result.mNode, stream, writeOptions);
-                                if (!writeResult.success())
+                                writeNif(stream, std::string(model.stem()), result.mShapes);
+                                if (!stream)
                                 {
-                                    Log(Debug::Warning) << "Failed to write " << path << ": " << writeResult.message();
-                                    result.mNode = nullptr;
+                                    Log(Debug::Warning) << "Failed to write " << path;
+                                    result.mShapes.clear();
                                     result.mSkipReason = "not written";
                                 }
                             }
                             const std::lock_guard lock(mutex);
-                            if (result.mNode != nullptr)
+                            if (!result.mShapes.empty())
                             {
                                 written.push_back(distantName);
                                 trianglesIn += result.mTrianglesIn;
                                 trianglesOut += result.mTrianglesOut;
                                 drawablesIn += result.mDrawablesIn;
                                 drawablesOut += result.mDrawablesOut;
+                                if (!onlyModels.empty())
+                                    for (const DistantShape& shape : result.mShapes)
+                                        Log(Debug::Info) << "  " << describe(shape);
                                 Log(Debug::Verbose)
                                     << model << ": " << result.mTrianglesIn << " -> " << result.mTrianglesOut
                                     << " triangles, " << result.mDrawablesIn << " -> " << result.mDrawablesOut
@@ -446,20 +536,28 @@ namespace DistantLandTool
             // testing: the written models read back as the game reads them
             if (!onlyModels.empty() && !dryRun)
             {
-                osg::ref_ptr<osgDB::Options> readOptions = new osgDB::Options;
+                VFS::Manager readBack;
+                Files::PathContainer outputDirs{ output };
+                VFS::registerArchives(
+                    &readBack, Files::Collections(outputDirs), {}, true, &encoder.getStatelessEncoder());
+                Resource::NifFileManager readBackNifs(&readBack, &encoder.getStatelessEncoder());
                 for (const std::string& name : written)
                 {
-                    std::ifstream stream(output / Files::pathFromUnicodeString(name), std::ios::binary);
-                    osgDB::ReaderWriter::ReadResult read = writer->readNode(stream, readOptions);
-                    if (!read.success() || read.getNode() == nullptr)
+                    try
                     {
-                        Log(Debug::Error) << "Failed to read back " << name << ": " << read.message();
-                        continue;
+                        const osg::ref_ptr<osg::Node> node = NifOsg::Loader::load(
+                            *readBackNifs.get(VFS::Path::Normalized(name)), &imageManager, &bgsmFileManager);
+                        SimplifyResult again = simplifyModel(*node, 1.f,
+                            SimplifyOptions{ .mMaxError = 0.f, .mMinPartRadius = 0.f, .mKeepUnchanged = true });
+                        Log(Debug::Info) << "Read back " << name << ": radius " << node->getBound().radius() << ", "
+                                         << again.mTrianglesIn << " triangles in " << again.mDrawablesIn << " shapes";
+                        for (const DistantShape& shape : again.mShapes)
+                            Log(Debug::Info) << "  " << describe(shape);
                     }
-                    const osg::Node* node = read.getNode();
-                    Log(Debug::Info) << "Read back " << name << ": radius " << node->getBound().radius() << ", "
-                                     << (node->asGroup() != nullptr ? node->asGroup()->getNumChildren() : 0)
-                                     << " shapes";
+                    catch (const std::exception& e)
+                    {
+                        Log(Debug::Error) << "Failed to read back " << name << ": " << e.what();
+                    }
                 }
             }
 

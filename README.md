@@ -13,10 +13,11 @@ every static, activator and door model placed outside, it:
 2. Merges the shapes that look alike: same texture, material, alpha and sides.
 3. Simplifies them with [meshoptimizer](https://github.com/zeux/meshoptimizer), staying within `--max-error` game
    units of the original (4 by default, less than a pixel from where distant chunks begin).
-4. Writes the result as `<model>_dist_0.osgb` to the local data folder (`data-local`, usually
+4. Writes the result as a Morrowind NIF, `<model>_dist_0.nif`, to the local data folder (`data-local`, usually
    `Documents/My Games/OpenMW/data`).
 
-The game's distant chunks then use these versions. Nearby cells (the active grid) still use the full models.
+OpenMW (0.47 and later) uses a model's `_dist_0.nif` in the distant chunks of object paging, so nothing else is
+needed in the game. Nearby cells (the active grid) still use the full models. The files open in NifSkope too.
 
 Some models are left as they are:
 
@@ -24,17 +25,18 @@ Some models are left as they are:
 - models with night and day versions (Glow in the Dahrk)
 - harvestable plants
 - models it can't make any lighter
+- models a mod already gives a distant version of its own (`_dist_0.nif`)
 
 A list of what was written is kept in `distantland-files.txt` in the output folder. The next run removes those files
 before writing new ones. Delete the files on that list to undo the tool completely.
 
-The game side, which finds the `.osgb` distant models, is part of the OpenMGE XE OpenMW build from build #112 on. Other
-OpenMW builds ignore these files.
+`--self-test` writes a model with every property the tool writes, reads it back the way the game does, and compares
+the two.
 
 ## Use
 
-1. Copy `openmw-distantlandtool.exe` into your OpenMGE XE OpenMW folder, next to `openmw.exe`. It uses that folder's
-   DLLs.
+1. Copy `openmw-distantlandtool.exe` into your OpenMW folder, next to `openmw.exe`. It uses that folder's DLLs; it is
+   built with the same libraries as the OpenMGE XE OpenMW build (the OpenMW 0.52 development libraries).
 2. With Mod Organizer 2, add it as an executable and run it from MO2, as you run OpenMW.
 3. Run it again after adding or removing mods that change the world outside.
 
@@ -50,7 +52,8 @@ Options (`--help` lists them all):
 | `--output` | data-local | Where to write the distant models |
 | `--threads` | cores - 1 | |
 | `--dry-run` | | Report only, write nothing |
-| `--model` | | Only these models (testing) |
+| `--model` | | Only these models, each read back after it is written (testing) |
+| `--self-test` | | Check the NIF writer against the game's NIF loader |
 
 ## Building
 
