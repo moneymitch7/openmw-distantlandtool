@@ -28,7 +28,7 @@ Some models are left as they are:
 - models a mod already gives a distant version of its own (`_dist_0.nif`)
 
 A list of what was written is kept in `distantland-files.txt` in the output folder. The next run removes those files
-before writing new ones. Delete the files on that list to undo the tool completely.
+before writing new ones. `--clean` removes them (and the list) without writing new ones, undoing the tool completely.
 
 `--self-test` writes a model with every property the tool writes, reads it back the way the game does, and compares
 the two.
@@ -51,6 +51,7 @@ Options (`--help` lists them all):
 | `--min-object-size` | 100 | Models smaller than this radius are skipped (distant chunks leave them out anyway) |
 | `--output` | data-local | Where to write the distant models |
 | `--threads` | cores - 1 | |
+| `--clean` | | Remove the last run's distant models and stop (to compare with and without) |
 | `--dry-run` | | Report only, write nothing |
 | `--model` | | Only these models, each read back after it is written (testing) |
 | `--self-test` | | Check the NIF writer against the game's NIF loader |

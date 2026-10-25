@@ -131,6 +131,9 @@ namespace DistantLandTool
             addOption("self-test", bpo::value<bool>()->implicit_value(true)->default_value(false),
                 "write a test model with every property the tool writes, read it back as the game does and compare");
 
+            addOption("clean", bpo::value<bool>()->implicit_value(true)->default_value(false),
+                "remove the distant models of the last run and stop (the game uses the full models again)");
+
             addOption("dry-run", bpo::value<bool>()->implicit_value(true)->default_value(false),
                 "simplify and report, but write nothing");
 
@@ -387,6 +390,14 @@ namespace DistantLandTool
             const float minObjectRadius = std::max(variables["min-object-size"].as<float>(), 0.f);
 
             Fallback::Map::init(variables["fallback"].as<Fallback::FallbackMap>().mMap);
+
+            if (variables["clean"].as<bool>())
+            {
+                Log(Debug::Info) << "Removing the distant models in " << output;
+                removePreviousFiles(output);
+                Log(Debug::Info) << "Done";
+                return 0;
+            }
 
             Log(Debug::Info) << "Writing distant models to " << output << (dryRun ? " (dry run: nothing written)" : "");
             // before the data folders are read: the last run's models are no mod's
