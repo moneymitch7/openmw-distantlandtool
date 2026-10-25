@@ -4,6 +4,7 @@
 
 #include "nifwriter.hpp"
 #include "simplify.hpp"
+#include "texturebake.hpp"
 
 #include <components/debug/debugging.hpp>
 #include <components/debug/debuglog.hpp>
@@ -34,17 +35,21 @@
 
 #include <osg/AlphaFunc>
 #include <osg/BlendFunc>
+#include <osg/Image>
 
 #include <boost/program_options.hpp>
 
 #include <algorithm>
 #include <atomic>
+#include <bit>
 #include <chrono>
 #include <cstddef>
+#include <cstring>
 #include <filesystem>
 #include <fstream>
 #include <map>
 #include <mutex>
+#include <set>
 #include <string>
 #include <thread>
 #include <vector>
@@ -130,6 +135,10 @@ namespace DistantLandTool
 
             addOption("self-test", bpo::value<bool>()->implicit_value(true)->default_value(false),
                 "write a test model with every property the tool writes, read it back as the game does and compare");
+
+            addOption("texture-size", bpo::value<int>()->default_value(128),
+                "size of the distant texture set's textures (stage 2: the game draws a distant chunk's objects from it "
+                "in a few draws); 0 makes none");
 
             addOption("clean", bpo::value<bool>()->implicit_value(true)->default_value(false),
                 "remove the distant models of the last run and stop (the game uses the full models again)");
@@ -239,7 +248,8 @@ namespace DistantLandTool
             while (std::getline(stream, line))
             {
                 // only what this tool writes
-                if (line.empty() || !line.ends_with(distantSuffix) || line.find("..") != std::string::npos)
+                if (line.empty() || line.find("..") != std::string::npos
+                    || (!line.ends_with(distantSuffix) && line != textureBakeName))
                     continue;
                 std::error_code ec;
                 if (std::filesystem::remove(output / Files::pathFromUnicodeString(line), ec))
@@ -325,6 +335,42 @@ namespace DistantLandTool
             {
                 Log(Debug::Error) << "Self test failed: what was read back differs from what was written";
                 return 1;
+            }
+
+            // The distant texture set's compression, decoded by OSG (as the GPU would): a gradient with alpha
+            {
+                constexpr int size = 8;
+                std::vector<float> rgba(size * size * 4);
+                for (int y = 0; y < size; ++y)
+                    for (int x = 0; x < size; ++x)
+                    {
+                        float* p = &rgba[(y * size + x) * 4];
+                        // along one direction of colour per block, as real textures mostly are: what DXT keeps
+                        const float t = (x + y) / 14.f;
+                        p[0] = t;
+                        p[1] = 1.f - t * 0.5f;
+                        p[2] = 0.25f;
+                        p[3] = (x + y) % 2 == 0 ? 1.f : 0.f;
+                    }
+                std::vector<std::uint8_t> blocks = encodeDxt5(rgba, size, size);
+                osg::ref_ptr<osg::Image> image = new osg::Image;
+                image->allocateImage(size, size, 1, textureBakeFormat, GL_UNSIGNED_BYTE);
+                std::memcpy(image->data(), blocks.data(), blocks.size());
+                float worst = 0.f;
+                for (int y = 0; y < size; ++y)
+                    for (int x = 0; x < size; ++x)
+                    {
+                        const osg::Vec4 c = image->getColor(static_cast<unsigned>(x), static_cast<unsigned>(y));
+                        const float* p = &rgba[(y * size + x) * 4];
+                        for (int k = 0; k < 4; ++k)
+                            worst = std::max(worst, std::abs(c[k] - p[k]));
+                    }
+                Log(Debug::Info) << "Texture compression: worst difference " << worst;
+                if (worst > 0.1f) // four colours per 4x4 block: a gradient lands up to half a step off
+                {
+                    Log(Debug::Error) << "Self test failed: the texture compression is off";
+                    return 1;
+                }
             }
             Log(Debug::Info) << "Self test passed";
             return 0;
@@ -442,6 +488,7 @@ namespace DistantLandTool
             std::atomic<std::size_t> next = 0;
             std::mutex mutex; // the log of skipped models, the manifest, the totals
             std::vector<std::string> written;
+            std::set<std::string> textures; // for the distant texture set
             std::map<std::string, std::size_t> skipped;
             std::size_t trianglesIn = 0;
             std::size_t trianglesOut = 0;
@@ -474,11 +521,17 @@ namespace DistantLandTool
                                 ++skipped["not a NIF"];
                                 continue;
                             }
-                            // a mod's own distant version is used by the game as it is
+                            // a mod's own distant version is used by the game as it is (only its textures are
+                            // gathered, for the distant texture set)
                             const std::string distantName = getDistantName(model);
                             if (vfs.exists(VFS::Path::Normalized(distantName)))
                             {
+                                const osg::ref_ptr<const osg::Node> own
+                                    = NifOsg::Loader::load(*nifFileManager.get(VFS::Path::Normalized(distantName)),
+                                        &imageManager, &bgsmFileManager);
+                                const SimplifyResult result = simplifyModel(*own, use.mMaxScale, simplifyOptions);
                                 const std::lock_guard lock(mutex);
+                                textures.insert(result.mTextures.begin(), result.mTextures.end());
                                 ++skipped["a mod has its own distant version"];
                                 continue;
                             }
@@ -505,6 +558,7 @@ namespace DistantLandTool
                                 }
                             }
                             const std::lock_guard lock(mutex);
+                            textures.insert(result.mTextures.begin(), result.mTextures.end());
                             if (!result.mShapes.empty())
                             {
                                 written.push_back(distantName);
@@ -570,6 +624,36 @@ namespace DistantLandTool
                         Log(Debug::Error) << "Failed to read back " << name << ": " << e.what();
                     }
                 }
+            }
+
+            // Stage 2: the distant texture set
+            const int textureSize = variables["texture-size"].as<int>();
+            if (textureSize > 0 && !textures.empty() && !dryRun)
+            {
+                TextureBakeOptions bakeOptions;
+                bakeOptions.mSize
+                    = static_cast<int>(std::bit_ceil(static_cast<unsigned>(std::clamp(textureSize, 16, 1024))));
+                bakeOptions.mThreads = threadsNumber;
+                Log(Debug::Info) << "Baking " << textures.size() << " textures at " << bakeOptions.mSize << "x"
+                                 << bakeOptions.mSize << " for the distant texture set";
+                // the full images (no longer names only), read no larger than needed
+                Resource::ImageManager bakeImages(&vfs, expiryDelay);
+                bakeImages.setMaxTextureSize(bakeOptions.mSize * 2);
+                const std::filesystem::path path = output / Files::pathFromUnicodeString(textureBakeName);
+                std::filesystem::create_directories(path.parent_path());
+                std::ofstream stream(path, std::ios::binary);
+                const TextureBakeResult baked = bakeTextures(
+                    std::vector<std::string>(textures.begin(), textures.end()), bakeImages, stream, bakeOptions);
+                stream.close();
+                if (stream)
+                {
+                    written.push_back(std::string(textureBakeName));
+                    Log(Debug::Info) << "Distant texture set: " << baked.mLayers << " textures, "
+                                     << baked.mBytes / (1024 * 1024) << " MB (" << baked.mFailed
+                                     << " could not be read)";
+                }
+                else
+                    Log(Debug::Warning) << "Failed to write " << path;
             }
 
             if (!dryRun)

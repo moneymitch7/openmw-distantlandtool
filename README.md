@@ -27,6 +27,13 @@ Some models are left as they are:
 - models it can't make any lighter
 - models a mod already gives a distant version of its own (`_dist_0.nif`)
 
+It also bakes the **distant texture set**, `distantland/textures.bin` in the same folder: every base texture those
+distant models use, shrunk to one size (`--texture-size`, 128 by default), with full mipmaps and compressed as DXT5.
+The smaller levels keep the coverage of alpha tested textures, so foliage doesn't thin out from afar. The OpenMGE XE
+build (from the commit "Distant land stage 2") loads the set into texture arrays and draws each distant chunk's
+objects that use only those textures as a few merged shapes, instead of a draw call per texture. Other OpenMW
+builds ignore the file. `[Terrain] object paging distant texture set = false` in `settings.cfg` turns it off.
+
 A list of what was written is kept in `distantland-files.txt` in the output folder. The next run removes those files
 before writing new ones. `--clean` removes them (and the list) without writing new ones, undoing the tool completely.
 
@@ -50,11 +57,12 @@ Options (`--help` lists them all):
 | `--min-part-size` | 8 | Parts smaller than this radius are left out |
 | `--min-object-size` | 100 | Models smaller than this radius are skipped (distant chunks leave them out anyway) |
 | `--output` | data-local | Where to write the distant models |
+| `--texture-size` | 128 | Size of the distant texture set's textures (16 to 1024); 0 bakes no set |
 | `--threads` | cores - 1 | |
 | `--clean` | | Remove the last run's distant models and stop (to compare with and without) |
 | `--dry-run` | | Report only, write nothing |
 | `--model` | | Only these models, each read back after it is written (testing) |
-| `--self-test` | | Check the NIF writer against the game's NIF loader |
+| `--self-test` | | Check the NIF writer and the texture compression against the game's loaders |
 
 ## Building
 

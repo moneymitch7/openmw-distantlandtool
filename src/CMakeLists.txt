@@ -5,7 +5,7 @@ if (NOT TARGET meshoptimizer)
     add_subdirectory(${CMAKE_CURRENT_SOURCE_DIR}/meshoptimizer ${CMAKE_CURRENT_BINARY_DIR}/meshoptimizer)
 endif()
 
-add_library(openmw-distantlandtool-lib STATIC simplify.cpp simplify.hpp nifwriter.cpp nifwriter.hpp)
+add_library(openmw-distantlandtool-lib STATIC simplify.cpp simplify.hpp nifwriter.cpp nifwriter.hpp texturebake.cpp texturebake.hpp)
 
 openmw_add_executable(openmw-distantlandtool main.cpp)
 

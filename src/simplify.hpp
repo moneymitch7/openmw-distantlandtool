@@ -67,6 +67,9 @@ namespace DistantLandTool
         std::size_t mTrianglesOut = 0;
         std::size_t mDrawablesIn = 0;
         std::size_t mDrawablesOut = 0;
+        // the base textures of the shapes the game can merge into a distant chunk's few draws (stage 2): those of a
+        // model with nothing that keeps it apart (animation, night and day versions, ...), whether simplified or not
+        std::vector<std::string> mTextures;
     };
 
     /// A distant version of a model: its static shapes in model space, those that look alike (texture, material,

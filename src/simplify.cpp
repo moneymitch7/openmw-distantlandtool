@@ -483,6 +483,9 @@ namespace DistantLandTool
             result.mSkipReason = collector.mSkipReason;
             return result;
         }
+        for (const auto& [key, group] : collector.mGroups)
+            if (group.mLook.mImage != nullptr)
+                result.mTextures.push_back(group.mLook.mImage->getFileName());
         if (collector.mGroups.empty())
         {
             result.mSkipReason = "no shapes large enough";
