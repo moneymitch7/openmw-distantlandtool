@@ -69,31 +69,33 @@ jobs:
       run: ./tool/add-to-openmw.sh openmw
 
     - name: Configure
-      run: >
-        cmake
-        -S openmw
-        -B ${{ github.workspace }}/build
-        -G Ninja
-        -D CMAKE_BUILD_TYPE=RelWithDebInfo
-        -D CMAKE_TOOLCHAIN_FILE='${{ github.workspace }}/deps/vcpkg-x64-windows-${{ env.MSVC }}-${{ env.VCPKG_TAG }}/scripts/buildsystems/vcpkg.cmake'
-        -D LuaJit_INCLUDE_DIR='${{ github.workspace }}/deps/vcpkg-x64-windows-${{ env.MSVC }}-${{ env.VCPKG_TAG }}/installed/x64-windows/include/luajit'
-        -D LuaJit_LIBRARY='${{ github.workspace }}/deps/vcpkg-x64-windows-${{ env.MSVC }}-${{ env.VCPKG_TAG }}/installed/x64-windows/lib/lua51.lib'
-        -D BUILD_OPENMW=OFF
-        -D BUILD_LAUNCHER=OFF
-        -D BUILD_WIZARD=OFF
-        -D BUILD_MWINIIMPORTER=OFF
-        -D BUILD_OPENCS=OFF
-        -D BUILD_ESSIMPORTER=OFF
-        -D BUILD_BSATOOL=OFF
-        -D BUILD_ESMTOOL=OFF
-        -D BUILD_NIFTEST=OFF
-        -D BUILD_NAVMESHTOOL=OFF
-        -D BUILD_BULLETOBJECTTOOL=OFF
-        -D BUILD_DISTANTLANDTOOL=OFF
-        -D OPENMW_USE_SYSTEM_SQLITE3=OFF
-        -D OPENMW_USE_SYSTEM_YAML_CPP=OFF
-        2>&1 | Tee-Object -FilePath ${{ github.workspace }}/configure.log
+      run: |
+        cmake `
+          -S openmw `
+          -B ${{ github.workspace }}/build `
+          -G Ninja `
+          -D CMAKE_BUILD_TYPE=RelWithDebInfo `
+          -D CMAKE_TOOLCHAIN_FILE='${{ github.workspace }}/deps/vcpkg-x64-windows-${{ env.MSVC }}-${{ env.VCPKG_TAG }}/scripts/buildsystems/vcpkg.cmake' `
+          -D LuaJit_INCLUDE_DIR='${{ github.workspace }}/deps/vcpkg-x64-windows-${{ env.MSVC }}-${{ env.VCPKG_TAG }}/installed/x64-windows/include/luajit' `
+          -D LuaJit_LIBRARY='${{ github.workspace }}/deps/vcpkg-x64-windows-${{ env.MSVC }}-${{ env.VCPKG_TAG }}/installed/x64-windows/lib/lua51.lib' `
+          -D BUILD_OPENMW=OFF `
+          -D BUILD_LAUNCHER=OFF `
+          -D BUILD_WIZARD=OFF `
+          -D BUILD_MWINIIMPORTER=OFF `
+          -D BUILD_OPENCS=OFF `
+          -D BUILD_ESSIMPORTER=OFF `
+          -D BUILD_BSATOOL=OFF `
+          -D BUILD_ESMTOOL=OFF `
+          -D BUILD_NIFTEST=OFF `
+          -D BUILD_NAVMESHTOOL=OFF `
+          -D BUILD_BULLETOBJECTTOOL=OFF `
+          -D BUILD_DISTANTLANDTOOL=OFF `
+          -D OPENMW_USE_SYSTEM_SQLITE3=OFF `
+          -D OPENMW_USE_SYSTEM_YAML_CPP=OFF `
+          2>&1 | Tee-Object -FilePath ${{ github.workspace }}/configure.log
+        if ($LASTEXITCODE -ne 0) { exit 1 }
 
+    # The job logs can't always be read from where the builds are checked: the errors as annotations as well
     - name: Report configure errors
       if: failure()
       shell: bash
@@ -104,7 +106,18 @@ jobs:
         fi
 
     - name: Build
-      run: cmake --build ${{ github.workspace }}/build --target openmw-distantlandtool
+      run: |
+        cmake --build ${{ github.workspace }}/build --target openmw-distantlandtool 2>&1 | Tee-Object -FilePath ${{ github.workspace }}/build.log
+        if ($LASTEXITCODE -ne 0) { exit 1 }
+
+    - name: Report build errors
+      if: failure()
+      shell: bash
+      run: |
+        if [ -f build.log ]; then
+          msg=$(grep -E "error|FAILED" build.log | head -40 | sed ':a;N;$!ba;s/\r//g;s/%/%25/g;s/\n/%0A/g')
+          echo "::error title=Build::${msg:-no error lines; see build.log}"
+        fi
 
     - name: Collect
       shell: bash
