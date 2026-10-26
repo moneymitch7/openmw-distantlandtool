@@ -88,10 +88,14 @@ namespace DistantLandTool
         }
 
         // Smaller levels average alpha, so an alpha-tested texture (leaves, fences) thins out and vanishes from afar:
-        // scaled so that as much of each level passes the test as of the largest.
+        // scaled up so that as much of each level passes the test as of the largest. Only ever up: a texture whose
+        // alpha mostly stays under the reference (soft leaves that a model tests with a lower threshold, which the
+        // game keeps) has nothing to keep, and scaling it down would empty the smaller levels.
         void keepCoverage(std::vector<float>& rgba, float ref, float target)
         {
-            float low = 0.f;
+            if (target <= 0.f || coverage(rgba, ref, 1.f) >= target)
+                return;
+            float low = 1.f;
             float high = 8.f;
             for (int i = 0; i < 12; ++i)
             {
