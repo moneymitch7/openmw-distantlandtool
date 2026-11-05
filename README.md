@@ -60,7 +60,7 @@ Options (`--help` lists them all):
 | `--min-part-size` | 8 | Parts smaller than this radius are left out |
 | `--min-object-size` | 100 | Models smaller than this radius are skipped (distant chunks leave them out anyway) |
 | `--output` | data-local | Where to write the distant models |
-| `--texture-size` | 128 | Size of the distant texture set's textures (16 to 1024); 0 bakes no set |
+| `--texture-size` | 128 (fork exe), 0 (opt-in exe) | Size of the distant texture set's textures (16 to 1024); 0 bakes no set |
 | `--threads` | cores - 1 | |
 | `--clean` | | Remove the last run's distant models and stop (to compare with and without) |
 | `--dry-run` | | Report only, write nothing |
