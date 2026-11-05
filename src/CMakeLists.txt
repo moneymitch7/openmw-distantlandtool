@@ -9,6 +9,13 @@ add_library(openmw-distantlandtool-lib STATIC simplify.cpp simplify.hpp nifwrite
 
 openmw_add_executable(openmw-distantlandtool main.cpp)
 
+# Bake the distant texture set by default (--texture-size 128) only for builds that read it, the OpenMGE XE fork's
+# (distant land stage 2). Other builds ignore the file, so without it the tool skips it unless asked.
+option(DISTANTLANDTOOL_TEXTURE_SET "Bake the distant texture set by default" ON)
+if (NOT DISTANTLANDTOOL_TEXTURE_SET)
+    target_compile_definitions(openmw-distantlandtool PRIVATE DISTANTLANDTOOL_DEFAULT_TEXTURE_SIZE=0)
+endif()
+
 target_link_libraries(openmw-distantlandtool openmw-distantlandtool-lib)
 
 target_link_libraries(openmw-distantlandtool-lib

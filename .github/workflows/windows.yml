@@ -1,23 +1,30 @@
 name: Windows
 
-# Builds openmw-distantlandtool.exe against the OpenMGE XE OpenMW fork, with the same prebuilt dependencies as its
-# Windows build, so the exe runs from that build's folder (next to openmw.exe, using its DLLs).
+# Builds openmw-distantlandtool.exe against moneymitch7/openmw with the same prebuilt dependencies as that branch's
+# Windows build, so the exe runs from that build's folder (next to openmw.exe, using its DLLs): one exe for the opt-in
+# build (openmge-shadows-only) and one for the OpenMGE XE fork (openmge-xe-actorclamp), or one for a ref given by hand.
 on:
   push:
   workflow_dispatch:
     inputs:
       openmw-ref:
-        description: Branch, tag or commit of moneymitch7/openmw to build against
-        default: openmge-xe-actorclamp
+        description: Branch, tag or commit of moneymitch7/openmw to build against (empty for both builds)
+        default: ""
         type: string
 
 env:
-  OPENMW_REF: ${{ inputs.openmw-ref || 'openmge-xe-actorclamp' }}
   MSVC: "2022"
 
 jobs:
   Windows:
     runs-on: windows-2022
+
+    strategy:
+      fail-fast: false
+      matrix:
+        include: ${{ fromJSON(inputs.openmw-ref && format('[{{"name":"custom","ref":"{0}","textureSet":"ON"}}]', inputs.openmw-ref) || '[{"name":"opt-in","ref":"openmge-shadows-only","textureSet":"OFF"},{"name":"fork","ref":"openmge-xe-actorclamp","textureSet":"ON"}]') }}
+
+    name: Windows (${{ matrix.name }})
 
     env:
       archive: FAILEDTODOWNLOAD
@@ -30,7 +37,7 @@ jobs:
     - uses: actions/checkout@v6
       with:
         repository: moneymitch7/openmw
-        ref: ${{ env.OPENMW_REF }}
+        ref: ${{ matrix.ref }}
         path: openmw
 
     - shell: bash
@@ -90,6 +97,7 @@ jobs:
           -D BUILD_NAVMESHTOOL=OFF `
           -D BUILD_BULLETOBJECTTOOL=OFF `
           -D BUILD_DISTANTLANDTOOL=OFF `
+          -D DISTANTLANDTOOL_TEXTURE_SET=${{ matrix.textureSet }} `
           -D OPENMW_USE_SYSTEM_SQLITE3=OFF `
           -D OPENMW_USE_SYSTEM_YAML_CPP=OFF `
           2>&1 | Tee-Object -FilePath ${{ github.workspace }}/configure.log
@@ -129,5 +137,5 @@ jobs:
 
     - uses: actions/upload-artifact@v6
       with:
-        name: openmw-distantlandtool-${{ github.sha }}
+        name: openmw-distantlandtool-${{ matrix.name }}-${{ github.sha }}
         path: out/*

@@ -1,8 +1,9 @@
 # openmw-distantlandtool
 
-A companion tool for the OpenMGE XE build of OpenMW
-([moneymitch7/openmw](https://github.com/moneymitch7/openmw), branch `openmge-xe-actorclamp`). It makes simpler
-distant versions of the models placed outside, so the distant chunks of object paging draw less.
+A companion tool for OpenMW builds from [moneymitch7/openmw](https://github.com/moneymitch7/openmw): the opt-in build
+(branch `openmge-shadows-only`, upstream OpenMW with a few opt-in features) and the OpenMGE XE fork (branch
+`openmge-xe-actorclamp`). It makes simpler distant versions of the models placed outside, so the distant chunks of
+object paging draw less. The models it writes work in any OpenMW since 0.47.
 
 ## What it does
 
@@ -27,8 +28,9 @@ Some models are left as they are:
 - models it can't make any lighter
 - models a mod already gives a distant version of its own (`_dist_0.nif`)
 
-It also bakes the **distant texture set**, `distantland/textures.bin` in the same folder: every base texture those
-distant models use, shrunk to one size (`--texture-size`, 128 by default), with full mipmaps and compressed as DXT5.
+For the OpenMGE XE fork it also bakes the **distant texture set**, `distantland/textures.bin` in the same folder:
+every base texture those distant models use, shrunk to one size (`--texture-size`, 128 by default in the fork's exe,
+0 (none) in the opt-in build's, which doesn't read it), with full mipmaps and compressed as DXT5.
 The smaller levels keep the coverage of alpha tested textures, so foliage doesn't thin out from afar. The OpenMGE XE
 build (from the commit "Distant land stage 2") loads the set into texture arrays and draws each distant chunk's
 objects that use only those textures as a few merged shapes, instead of a draw call per texture. Other OpenMW
@@ -42,8 +44,9 @@ the two.
 
 ## Use
 
-1. Copy `openmw-distantlandtool.exe` into your OpenMW folder, next to `openmw.exe`. It uses that folder's DLLs; it is
-   built with the same libraries as the OpenMGE XE OpenMW build (the OpenMW 0.52 development libraries).
+1. Copy `openmw-distantlandtool.exe` into your OpenMW folder, next to `openmw.exe`. It uses that folder's DLLs, so take
+   the exe built for that build: `openmw-distantlandtool-opt-in-<commit>` for the opt-in build,
+   `openmw-distantlandtool-fork-<commit>` for the OpenMGE XE fork (each is built with that branch's libraries).
 2. With Mod Organizer 2, add it as an executable and run it from MO2, as you run OpenMW.
 3. Run it again after adding or removing mods that change the world outside.
 
@@ -74,8 +77,9 @@ cmake -S path/to/openmw -B build -D BUILD_OPENMW=OFF -D BUILD_OPENCS=OFF -D BUIL
 cmake --build build --target openmw-distantlandtool
 ```
 
-GitHub Actions builds the Windows exe against the fork with the same prebuilt dependencies as its own Windows build
-(see `.github/workflows/windows.yml`). The `openmw-ref` input picks the branch, tag or commit to build against.
+GitHub Actions builds a Windows exe against each branch with the same prebuilt dependencies as that branch's own
+Windows build (see `.github/workflows/windows.yml`). Run by hand, the `openmw-ref` input builds against one branch,
+tag or commit instead. `-D DISTANTLANDTOOL_TEXTURE_SET=OFF` makes `--texture-size` default to 0.
 
 ## Licence
 

@@ -33,6 +33,11 @@
 #include <components/vfs/manager.hpp>
 #include <components/vfs/registerarchives.hpp>
 
+// The distant texture set is baked by default only for builds that read it (DISTANTLANDTOOL_TEXTURE_SET in CMake).
+#ifndef DISTANTLANDTOOL_DEFAULT_TEXTURE_SIZE
+#define DISTANTLANDTOOL_DEFAULT_TEXTURE_SIZE 128
+#endif
+
 #include <osg/AlphaFunc>
 #include <osg/BlendFunc>
 #include <osg/Image>
@@ -136,9 +141,9 @@ namespace DistantLandTool
             addOption("self-test", bpo::value<bool>()->implicit_value(true)->default_value(false),
                 "write a test model with every property the tool writes, read it back as the game does and compare");
 
-            addOption("texture-size", bpo::value<int>()->default_value(128),
-                "size of the distant texture set's textures (stage 2: the game draws a distant chunk's objects from it "
-                "in a few draws); 0 makes none");
+            addOption("texture-size", bpo::value<int>()->default_value(DISTANTLANDTOOL_DEFAULT_TEXTURE_SIZE),
+                "size of the distant texture set's textures (stage 2, OpenMGE XE fork builds only: the game draws a "
+                "distant chunk's objects from it in a few draws); 0 makes none");
 
             addOption("clean", bpo::value<bool>()->implicit_value(true)->default_value(false),
                 "remove the distant models of the last run and stop (the game uses the full models again)");
