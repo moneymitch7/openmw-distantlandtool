@@ -54,6 +54,7 @@
 #include <fstream>
 #include <map>
 #include <mutex>
+#include <optional>
 #include <set>
 #include <string>
 #include <thread>
@@ -228,6 +229,35 @@ namespace DistantLandTool
             }
             Log(Debug::Info) << "Found " << result.size() << " models placed in " << cells << " cells outside";
             return result;
+        }
+
+        // The world from the content files. One in openmw.cfg that none of its data folders has (Mod Organizer can
+        // show the game a mod through its virtual Data Files without listing its folder) is left out with a warning
+        // rather than stopping the tool, since only the world's placements matter here.
+        EsmLoader::EsmData loadWorld(const EsmLoader::Query& query, StringsVector contentFiles,
+            const Files::Collections& fileCollections, std::optional<ESM::ReadersCache>& readers,
+            ToUTF8::Utf8Encoder* encoder)
+        {
+            while (true)
+            {
+                try
+                {
+                    readers.emplace();
+                    return EsmLoader::loadEsmData(query, contentFiles, fileCollections, *readers, encoder);
+                }
+                catch (const std::runtime_error& e)
+                {
+                    const std::string_view message = e.what();
+                    const auto missing = std::find_if(contentFiles.begin(), contentFiles.end(),
+                        [&](const std::string& file) { return message == "file " + file + " not found"; });
+                    if (missing == contentFiles.end())
+                        throw;
+                    Log(Debug::Warning) << "Content file " << *missing
+                                        << " is in no data folder, left out (its placements get no distant models). "
+                                           "Run the tool from Mod Organizer, as the game, so it sees the same files.";
+                    contentFiles.erase(missing);
+                }
+            }
         }
 
         constexpr std::string_view distantSuffix = "_dist_0.nif";
@@ -468,15 +498,15 @@ namespace DistantLandTool
             std::map<VFS::Path::Normalized, ModelUse> models;
             if (onlyModels.empty())
             {
-                ESM::ReadersCache readers;
+                std::optional<ESM::ReadersCache> readers;
                 EsmLoader::Query query;
                 query.mLoadActivators = true;
                 query.mLoadCells = true;
                 query.mLoadDoors = true;
                 query.mLoadStatics = true;
                 const EsmLoader::EsmData esmData
-                    = EsmLoader::loadEsmData(query, contentFiles, fileCollections, readers, &encoder);
-                models = collectModels(esmData, readers);
+                    = loadWorld(query, contentFiles, fileCollections, readers, &encoder);
+                models = collectModels(esmData, *readers);
             }
             else
                 for (const std::string& model : onlyModels)
